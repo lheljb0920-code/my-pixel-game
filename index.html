@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Robot Korea: Neon Rooftop Run</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f7f7ef;
+      --panel: #11182b;
+      --panel-edge: #6f87ad;
+      --accent: #46d9ff;
+      --danger: #ff3b38;
+      --gold: #ffca2f;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 55% 35%, rgba(61, 92, 207, .42), transparent 31rem),
+        linear-gradient(#020716 0%, #06174b 58%, #05040b 100%);
+      color: var(--ink);
+      font-family: "Courier New", monospace;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+
+    .shell {
+      position: relative;
+      width: min(100%, 1280px);
+      aspect-ratio: 16 / 9;
+      border: 4px solid #121729;
+      border-radius: 14px;
+      background: #030611;
+      box-shadow:
+        0 0 0 4px #2e3f66,
+        0 28px 90px rgba(0, 0, 0, .65),
+        inset 0 0 0 2px rgba(255, 255, 255, .08);
+      image-rendering: pixelated;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      border-radius: 10px;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, .58);
+      backdrop-filter: blur(2px);
+    }
+
+    .overlay[hidden] { display: none; }
+
+    .card {
+      width: min(92%, 560px);
+      padding: 26px;
+      text-align: center;
+      background: linear-gradient(180deg, rgba(24, 32, 54, .96), rgba(8, 12, 28, .96));
+      border: 4px solid var(--panel-edge);
+      border-radius: 10px;
+      box-shadow: 0 0 0 4px #0b1020, 0 14px 36px rgba(0, 0, 0, .55);
+    }
+
+    h1, h2 {
+      margin: 0 0 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 4px 4px 0 #000;
+    }
+
+    p { line-height: 1.55; }
+
+    .keys {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin: 18px 0 24px;
+    }
+
+    kbd, button {
+      border: 3px solid #8399bd;
+      border-radius: 6px;
+      background: #11172a;
+      color: var(--ink);
+      box-shadow: inset -3px -3px 0 rgba(0, 0, 0, .45), inset 3px 3px 0 rgba(255, 255, 255, .12);
+      font-family: inherit;
+      font-weight: 900;
+    }
+
+    kbd { padding: 7px 10px; }
+
+    button {
+      cursor: pointer;
+      padding: 12px 20px;
+      font-size: clamp(16px, 2.2vw, 24px);
+      text-transform: uppercase;
+    }
+
+    button:hover, button:focus-visible {
+      border-color: var(--accent);
+      color: var(--accent);
+      outline: none;
+      transform: translateY(-1px);
+    }
+
+    .small { color: #b8c5dc; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main class="shell" aria-label="2D 횡스크롤 픽셀 게임">
+    <canvas id="game" width="1280" height="720"></canvas>
+
+    <section id="startScreen" class="overlay">
+      <div class="card">
+        <h1>Robot Korea<br />Neon Rooftop Run</h1>
+        <p>업로드한 로봇·도시·코인 에셋 시트 분위기를 참고해 만든 브라우저용 2D 횡스크롤 픽셀 게임입니다.</p>
+        <div class="keys" aria-label="조작법">
+          <kbd>←</kbd><kbd>→</kbd><kbd>Space 점프</kbd>
+        </div>
+        <button id="startButton" type="button">게임 시작</button>
+        <p class="small">GitHub Pages에서 이 파일 하나만 열면 바로 실행됩니다.</p>
+      </div>
+    </section>
+
+    <section id="gameOverScreen" class="overlay" hidden>
+      <div class="card">
+        <h2 id="gameOverTitle">Game Over</h2>
+        <p id="finalStats"></p>
+        <button id="restartButton" type="button">재시작</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.querySelector('#game');
+      const ctx = canvas.getContext('2d');
+      const startScreen = document.querySelector('#startScreen');
+      const gameOverScreen = document.querySelector('#gameOverScreen');
+      const finalStats = document.querySelector('#finalStats');
+      const gameOverTitle = document.querySelector('#gameOverTitle');
+      const startButton = document.querySelector('#startButton');
+      const restartButton = document.querySelector('#restartButton');
+
+      const W = canvas.width;
+      const H = canvas.height;
+      const keys = new Set();
+      const gravity = 0.72;
+      const friction = 0.84;
+      const levelWidth = 4200;
+      const groundY = 572;
+      const tile = 48;
+
+      let cameraX = 0;
+      let gameState = 'start';
+      let lastTime = 0;
+      let elapsed = 0;
+      let score = 0;
+      let coinsCollected = 0;
+
+      const player = {
+        x: 120,
+        y: groundY - 96,
+        w: 54,
+        h: 88,
+        vx: 0,
+        vy: 0,
+        speed: 0.92,
+        jump: -17,
+        grounded: false,
+        facing: 1,
+        health: 7,
+        maxHealth: 7,
+        invincible: 0
+      };
+
+      const platforms = [
+        { x: 0, y: groundY, w: 910, h: 150 },
+        { x: 1000, y: groundY - 68, w: 510, h: 68 },
+        { x: 1650, y: groundY, w: 620, h: 150 },
+        { x: 2430, y: groundY - 92, w: 520, h: 92 },
+        { x: 3140, y: groundY, w: 1060, h: 150 },
+        { x: 740, y: 398, w: 250, h: 32 },
+        { x: 1540, y: 330, w: 280, h: 34 },
+        { x: 2220, y: 390, w: 330, h: 34 },
+        { x: 3000, y: 346, w: 270, h: 34 }
+      ];
+
+      const coins = [
+        ...makeCoins(610, 348, 4),
+        ...makeCoins(1170, 420, 5),
+        ...makeCoins(1750, 480, 4),
+        ...makeCoins(2340, 320, 5),
+        ...makeCoins(2850, 260, 4),
+        ...makeCoins(3370, 440, 6),
+        ...makeCoins(3840, 350, 4)
+      ];
+
+      const enemies = [
+        { type: 'rat', x: 690, y: groundY - 36, w: 58, h: 34, vx: 1.1, min: 540, max: 860, hp: 1 },
+        { type: 'bot', x: 1260, y: groundY - 68 - 62, w: 64, h: 62, vx: -0.9, min: 1040, max: 1440, hp: 2 },
+        { type: 'drone', x: 1850, y: 268, w: 76, h: 56, vx: 1.35, min: 1540, max: 2200, hp: 1, phase: 0 },
+        { type: 'rat', x: 2580, y: groundY - 92 - 36, w: 58, h: 34, vx: 1.15, min: 2440, max: 2900, hp: 1 },
+        { type: 'bot', x: 3330, y: groundY - 62, w: 64, h: 62, vx: 0.95, min: 3180, max: 4050, hp: 2 },
+        { type: 'drone', x: 3690, y: 300, w: 76, h: 56, vx: -1.45, min: 3220, max: 4080, hp: 1, phase: 2 }
+      ];
+
+      enemies.forEach(enemy => {
+        enemy.spawnX = enemy.x;
+        enemy.spawnY = enemy.y;
+        enemy.spawnVx = enemy.vx;
+        enemy.spawnPhase = enemy.phase || 0;
+      });
+
+      const props = [
+        { kind: 'shop', x: 40, y: groundY - 250 },
+        { kind: 'billboard', x: 570, y: 350, text: '로봇코리아' },
+        { kind: 'tree', x: 860, y: groundY - 170 },
+        { kind: 'lamp', x: 420, y: groundY - 320 },
+        { kind: 'billboard', x: 2050, y: 338, text: 'COIN LAB' },
+        { kind: 'shop', x: 3180, y: groundY - 250 },
+        { kind: 'lamp', x: 3000, y: groundY - 320 },
+        { kind: 'cone', x: 3500, y: groundY - 70 },
+        { kind: 'barrier', x: 3770, y: groundY - 82 }
+      ];
+
+      function makeCoins(x, y, count) {
+        return Array.from({ length: count }, (_, i) => ({ x: x + i * 64, y, r: 18, taken: false, bob: i }));
+      }
+
+      function resetGame() {
+        Object.assign(player, {
+          x: 120, y: groundY - 96, vx: 0, vy: 0, grounded: false, facing: 1,
+          health: player.maxHealth, invincible: 0
+        });
+        cameraX = 0;
+        elapsed = 0;
+        score = 0;
+        coinsCollected = 0;
+        coins.forEach(c => { c.taken = false; });
+        enemies.forEach(e => {
+          e.x = e.spawnX;
+          e.y = e.spawnY;
+          e.vx = e.spawnVx;
+          e.hp = e.type === 'bot' ? 2 : 1;
+          e.phase = e.spawnPhase;
+        });
+      }
+
+      function startGame() {
+        resetGame();
+        gameState = 'playing';
+        startScreen.hidden = true;
+        gameOverScreen.hidden = true;
+        lastTime = performance.now();
+        requestAnimationFrame(loop);
+      }
+
+      function endGame(won = false) {
+        gameState = 'over';
+        gameOverTitle.textContent = won ? 'Mission Clear!' : 'Game Over';
+        finalStats.textContent = `점수 ${score.toString().padStart(6, '0')} · 코인 ${coinsCollected}/${coins.length} · 생존 시간 ${Math.floor(elapsed)}초`;
+        gameOverScreen.hidden = false;
+      }
+
+      function loop(now) {
+        const dt = Math.min((now - lastTime) / 16.67, 2);
+        lastTime = now;
+        update(dt);
+        draw();
+        if (gameState === 'playing') requestAnimationFrame(loop);
+      }
+
+      function update(dt) {
+        elapsed += dt / 60;
+        const left = keys.has('ArrowLeft');
+        const right = keys.has('ArrowRight');
+
+        if (left) {
+          player.vx -= player.speed * dt;
+          player.facing = -1;
+        }
+        if (right) {
+          player.vx += player.speed * dt;
+          player.facing = 1;
+        }
+        if (!left && !right) player.vx *= friction;
+        player.vx = clamp(player.vx, -7, 7);
+        player.vy += gravity * dt;
+        player.x += player.vx * dt;
+        player.y += player.vy * dt;
+        player.grounded = false;
+
+        platforms.forEach(p => resolvePlatform(player, p));
+        player.x = clamp(player.x, 0, levelWidth - player.w);
+        if (player.y > H + 160) damagePlayer(99);
+        if (player.invincible > 0) player.invincible -= dt;
+
+        enemies.forEach(e => updateEnemy(e, dt));
+        coins.forEach(c => {
+          if (!c.taken && circleRect(c.x, c.y, c.r, player)) {
+            c.taken = true;
+            coinsCollected += 1;
+            score += 100;
+          }
+        });
+
+        enemies.forEach(e => {
+          if (e.hp > 0 && rectsOverlap(player, e)) {
+            if (player.vy > 4 && player.y + player.h - e.y < 28) {
+              e.hp -= 1;
+              player.vy = player.jump * 0.55;
+              score += 150;
+            } else {
+              damagePlayer(1);
+            }
+          }
+        });
+
+        cameraX = clamp(player.x - 370, 0, levelWidth - W);
+        score += Math.floor(dt * 0.45);
+        if (player.x > levelWidth - 140) endGame(true);
+      }
+
+      function updateEnemy(e, dt) {
+        if (e.hp <= 0) return;
+        e.x += e.vx * dt;
+        if (e.x < e.min || e.x + e.w > e.max) {
+          e.vx *= -1;
+          e.x = clamp(e.x, e.min, e.max - e.w);
+        }
+        if (e.type === 'drone') {
+          e.phase += 0.05 * dt;
+          e.y += Math.sin(e.phase) * 0.45 * dt;
+        }
+      }
+
+      function damagePlayer(amount) {
+        if (player.invincible > 0) return;
+        player.health -= amount;
+        player.invincible = 82;
+        player.vx = -player.facing * 7;
+        player.vy = -8;
+        if (player.health <= 0) endGame(false);
+      }
+
+      function resolvePlatform(body, p) {
+        if (!rectsOverlap(body, p)) return;
+        const prevBottom = body.y + body.h - body.vy;
+        if (prevBottom <= p.y + 8 && body.vy >= 0) {
+          body.y = p.y - body.h;
+          body.vy = 0;
+          body.grounded = true;
+          return;
+        }
+        if (body.x + body.w / 2 < p.x + p.w / 2) body.x = p.x - body.w;
+        else body.x = p.x + p.w;
+        body.vx = 0;
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+        drawSky();
+        ctx.save();
+        ctx.translate(-cameraX, 0);
+        drawCityLayer(0.18, 430, '#101d4e', '#274174');
+        drawCityLayer(0.34, 505, '#0a1438', '#18305e');
+        props.forEach(drawProp);
+        platforms.forEach(drawPlatform);
+        coins.forEach(drawCoin);
+        enemies.forEach(drawEnemy);
+        drawFinishGate();
+        drawPlayer();
+        ctx.restore();
+        drawHud();
+      }
+
+      function drawSky() {
+        const gradient = ctx.createLinearGradient(0, 0, 0, H);
+        gradient.addColorStop(0, '#030719');
+        gradient.addColorStop(0.38, '#1232a4');
+        gradient.addColorStop(1, '#070816');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = 'rgba(255,255,255,.72)';
+        for (let i = 0; i < 78; i++) {
+          const x = (i * 173 + Math.floor(cameraX * 0.15)) % W;
+          const y = 70 + ((i * 47) % 230);
+          pixel(x, y, i % 3 + 1, i % 4 + 1);
+        }
+        ctx.fillStyle = 'rgba(42, 79, 190, .24)';
+        for (let y = 116; y < 410; y += 48) ctx.fillRect(0, y, W, 10);
+        drawTower(W * 0.58 - cameraX * 0.18, 165);
+      }
+
+      function drawCityLayer(speed, base, color, light) {
+        const start = Math.floor(cameraX * speed / 120) * 120 - 180;
+        for (let x = start; x < cameraX * speed + W + 200; x += 112) {
+          const worldX = x / speed;
+          const h = 90 + ((Math.floor(x) * 13) % 150);
+          ctx.fillStyle = color;
+          ctx.fillRect(worldX, base - h, 88, h);
+          ctx.fillStyle = light;
+          for (let wy = base - h + 20; wy < base - 18; wy += 28) {
+            for (let wx = worldX + 14; wx < worldX + 76; wx += 24) {
+              if ((wx + wy) % 3 > 1) ctx.fillRect(wx, wy, 10, 9);
+            }
+          }
+        }
+      }
+
+      function drawTower(x, y) {
+        ctx.fillStyle = '#172251';
+        ctx.fillRect(x + 28, y + 86, 22, 210);
+        ctx.fillStyle = '#263b76';
+        ctx.fillRect(x + 12, y + 60, 54, 32);
+        ctx.fillRect(x + 5, y + 90, 68, 32);
+        ctx.fillStyle = '#f2f2d8';
+        for (let i = 0; i < 4; i++) ctx.fillRect(x + 18 + i * 12, y + 70, 6, 8);
+        ctx.fillStyle = '#ff304c';
+        ctx.fillRect(x + 37, y, 5, 60);
+        ctx.fillRect(x + 34, y - 10, 11, 11);
+      }
+
+      function drawPlatform(p) {
+        ctx.fillStyle = '#757f98';
+        ctx.fillRect(p.x, p.y, p.w, 18);
+        ctx.fillStyle = '#b1bbd0';
+        ctx.fillRect(p.x, p.y, p.w, 4);
+        ctx.strokeStyle = '#34394c';
+        ctx.lineWidth = 3;
+        for (let x = p.x; x < p.x + p.w; x += tile) {
+          ctx.strokeRect(x, p.y, tile, 42);
+        }
+        ctx.fillStyle = '#252a3d';
+        ctx.fillRect(p.x, p.y + 42, p.w, p.h - 42);
+        ctx.strokeStyle = '#121625';
+        for (let y = p.y + 62; y < p.y + p.h; y += 28) {
+          ctx.beginPath();
+          ctx.moveTo(p.x, y);
+          ctx.lineTo(p.x + p.w, y);
+          ctx.stroke();
+        }
+        for (let x = p.x + 15; x < p.x + p.w; x += 62) {
+          ctx.strokeRect(x, p.y + 62, 46, 24);
+        }
+      }
+
+      function drawProp(prop) {
+        const x = prop.x;
+        const y = prop.y;
+        if (prop.kind === 'shop') {
+          ctx.fillStyle = '#462f3b'; ctx.fillRect(x, y + 54, 245, 196);
+          ctx.fillStyle = '#be2f32'; ctx.fillRect(x + 15, y, 215, 70);
+          ctx.fillStyle = '#f6f0df'; ctx.font = 'bold 28px Courier New'; ctx.fillText('로봇 분식', x + 36, y + 45);
+          ctx.fillStyle = '#ffcf6a'; ctx.fillRect(x + 28, y + 103, 64, 86); ctx.fillRect(x + 132, y + 102, 72, 90);
+          ctx.fillStyle = '#922c37';
+          for (let i = 0; i < 5; i++) ctx.fillRect(x + i * 49, y + 72, 28, 38);
+          ctx.strokeStyle = '#1d1b28'; ctx.lineWidth = 4; ctx.strokeRect(x, y + 54, 245, 196);
+        }
+        if (prop.kind === 'billboard') {
+          ctx.fillStyle = '#17203b'; ctx.fillRect(x + 100, y + 70, 16, 84); ctx.fillRect(x + 30, y + 70, 16, 84);
+          ctx.fillStyle = '#7385ab'; ctx.fillRect(x, y, 250, 78);
+          ctx.fillStyle = '#26396e'; ctx.fillRect(x + 8, y + 8, 234, 62);
+          ctx.fillStyle = '#17245a'; ctx.font = 'bold 30px Courier New'; ctx.fillText(prop.text, x + 28, y + 48);
+        }
+        if (prop.kind === 'tree') {
+          ctx.fillStyle = '#2f1f24'; ctx.fillRect(x + 38, y + 80, 28, 90);
+          ctx.fillStyle = '#25582c'; circle(x + 58, y + 54, 62);
+          ctx.fillStyle = '#39743b'; circle(x + 30, y + 72, 42); circle(x + 82, y + 78, 40);
+        }
+        if (prop.kind === 'lamp') {
+          ctx.fillStyle = '#2b3146'; ctx.fillRect(x + 14, y + 58, 14, 262);
+          ctx.fillRect(x + 14, y + 58, 112, 16);
+          ctx.fillStyle = '#f5d78b'; ctx.fillRect(x + 100, y + 52, 48, 18);
+        }
+        if (prop.kind === 'cone') {
+          ctx.fillStyle = '#f05a24'; ctx.fillRect(x + 24, y + 12, 28, 58); ctx.fillRect(x, y + 58, 80, 18);
+          ctx.fillStyle = '#fff0d1'; ctx.fillRect(x + 18, y + 42, 42, 9);
+        }
+        if (prop.kind === 'barrier') {
+          ctx.fillStyle = '#30384d'; ctx.fillRect(x, y + 44, 150, 24);
+          ctx.fillStyle = '#f4b51f';
+          for (let i = 0; i < 5; i++) ctx.fillRect(x + i * 34, y + 44, 20, 24);
+          ctx.fillStyle = '#171923'; ctx.fillRect(x + 20, y + 20, 8, 66); ctx.fillRect(x + 120, y + 20, 8, 66);
+        }
+      }
+
+      function drawCoin(c) {
+        if (c.taken) return;
+        const y = c.y + Math.sin(elapsed * 5 + c.bob) * 7;
+        ctx.fillStyle = '#8e4f00'; circle(c.x, y, c.r + 3);
+        ctx.fillStyle = '#ff9d13'; circle(c.x, y, c.r);
+        ctx.fillStyle = '#ffe173'; ctx.fillRect(c.x - 4, y - 14, 8, 28);
+        ctx.fillRect(c.x - 10, y - 5, 20, 6);
+      }
+
+      function drawEnemy(e) {
+        if (e.hp <= 0) return;
+        if (e.type === 'rat') drawRat(e);
+        if (e.type === 'bot') drawBot(e);
+        if (e.type === 'drone') drawDrone(e);
+      }
+
+      function drawRat(e) {
+        ctx.fillStyle = '#222736'; circle(e.x + 26, e.y + 22, 24);
+        ctx.fillStyle = '#ff9c9e'; circle(e.x + 11, e.y + 4, 10); circle(e.x + 42, e.y + 3, 12);
+        ctx.fillStyle = '#f6d6bd'; pixel(e.x + 50, e.y + 22, 9, 7);
+        ctx.strokeStyle = '#e07f86'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(e.x + 6, e.y + 24); ctx.quadraticCurveTo(e.x - 22, e.y + 16, e.x - 16, e.y + 6); ctx.stroke();
+        drawHealthBar(e.x, e.y - 20, e.w, e.hp, 1);
+      }
+
+      function drawBot(e) {
+        ctx.fillStyle = '#d3dae8'; ctx.fillRect(e.x + 8, e.y + 7, 48, 42);
+        ctx.fillStyle = '#1e2944'; ctx.fillRect(e.x + 17, e.y + 17, 30, 17);
+        ctx.fillStyle = '#4be7ff'; ctx.fillRect(e.x + 22, e.y + 21, 7, 8); ctx.fillRect(e.x + 36, e.y + 21, 7, 8);
+        ctx.fillStyle = '#9ba9bd'; ctx.fillRect(e.x, e.y + 28, 10, 24); ctx.fillRect(e.x + 54, e.y + 28, 10, 24);
+        ctx.fillStyle = '#101525'; ctx.fillRect(e.x + 9, e.y + 51, 18, 11); ctx.fillRect(e.x + 37, e.y + 51, 18, 11);
+        drawHealthBar(e.x, e.y - 20, e.w, e.hp, 2);
+      }
+
+      function drawDrone(e) {
+        ctx.fillStyle = '#cbd6e8'; ctx.fillRect(e.x + 20, e.y + 12, 38, 35);
+        ctx.fillStyle = '#162440'; circle(e.x + 40, e.y + 30, 15);
+        ctx.fillStyle = '#55d9ff'; circle(e.x + 40, e.y + 30, 7);
+        ctx.fillStyle = '#aab8d0'; ctx.fillRect(e.x, e.y + 4, 24, 8); ctx.fillRect(e.x + 52, e.y + 4, 24, 8);
+        ctx.fillStyle = '#eef3ff'; ctx.fillRect(e.x + 6, e.y, 12, 4); ctx.fillRect(e.x + 58, e.y, 12, 4);
+        ctx.fillStyle = '#ff5a22'; pixel(e.x - 12, e.y + 39, 13, 7);
+        drawHealthBar(e.x, e.y - 18, e.w, e.hp, 1);
+      }
+
+      function drawPlayer() {
+        const blink = player.invincible > 0 && Math.floor(player.invincible / 6) % 2 === 0;
+        if (blink) return;
+        const x = player.x;
+        const y = player.y;
+        ctx.save();
+        ctx.translate(x + player.w / 2, y);
+        ctx.scale(player.facing, 1);
+        ctx.translate(-player.w / 2, 0);
+        ctx.fillStyle = '#d8d3c8'; ctx.fillRect(12, 20, 31, 42);
+        ctx.fillStyle = '#eee9de'; ctx.fillRect(4, 0, 46, 42);
+        ctx.fillStyle = '#677083'; ctx.fillRect(0, 8, 9, 22); ctx.fillRect(46, 10, 8, 20);
+        ctx.fillStyle = '#0e1730'; ctx.fillRect(14, 11, 25, 18);
+        ctx.fillStyle = '#75e6ff'; ctx.fillRect(28, 16, 8, 9);
+        ctx.fillStyle = '#f1f0e8'; ctx.fillRect(19, 13, 5, 5);
+        ctx.fillStyle = '#b7b2aa'; ctx.fillRect(0, 52, 15, 29); ctx.fillRect(38, 52, 15, 29);
+        ctx.fillRect(-5, 82, 24, 8); ctx.fillRect(36, 82, 24, 8);
+        ctx.fillStyle = '#d8d3c8'; ctx.fillRect(-4, 36, 15, 32); ctx.fillRect(44, 35, 15, 18);
+        ctx.fillStyle = '#45d7ff'; ctx.fillRect(57, 40, 34, 14); ctx.fillRect(91, 44, 11, 5);
+        ctx.fillStyle = '#1ea9e5'; ctx.fillRect(62, 44, 25, 5);
+        ctx.fillStyle = '#58dfff'; circle(27, 43, 8);
+        ctx.fillStyle = '#116c9e'; circle(27, 43, 4);
+        ctx.restore();
+      }
+
+      function drawFinishGate() {
+        const x = levelWidth - 92;
+        ctx.fillStyle = '#d7deec'; ctx.fillRect(x, 210, 18, 360);
+        ctx.fillStyle = '#ffca2f'; ctx.fillRect(x + 18, 220, 95, 60);
+        ctx.fillStyle = '#11182b'; ctx.font = 'bold 24px Courier New'; ctx.fillText('GOAL', x + 32, 258);
+      }
+
+      function drawHud() {
+        ctx.fillStyle = 'rgba(3, 6, 17, .72)'; ctx.fillRect(0, 0, W, 86);
+        drawPortrait(22, 15);
+        ctx.fillStyle = '#fffef3'; ctx.font = 'bold 34px Courier New'; ctx.fillText('x 03', 116, 51);
+        for (let i = 0; i < player.maxHealth; i++) {
+          ctx.fillStyle = i < player.health ? '#f52d2d' : '#351c2a';
+          ctx.fillRect(116 + i * 42, 66, 34, 20);
+          ctx.strokeStyle = '#d9e4f2'; ctx.strokeRect(116 + i * 42, 66, 34, 20);
+        }
+        ctx.fillStyle = '#fffef3'; ctx.font = 'bold 34px Courier New';
+        ctx.fillText('SCORE', 455, 38); ctx.fillText(String(score).padStart(7, '0'), 455, 76);
+        ctx.fillText('TIME', 670, 38); ctx.fillText(String(Math.max(0, 300 - Math.floor(elapsed))).padStart(3, '0'), 675, 76);
+        drawCoin({ x: 846, y: 36, r: 15, taken: false, bob: 0 });
+        ctx.fillStyle = '#fffef3'; ctx.fillText(`x ${coinsCollected}`, 884, 51);
+        ctx.fillText('WORLD', 1040, 38); ctx.fillText('1-1', 1044, 76);
+        if (300 - elapsed <= 0 && gameState === 'playing') damagePlayer(99);
+      }
+
+      function drawPortrait(x, y) {
+        ctx.fillStyle = '#11182b'; ctx.fillRect(x, y, 76, 76);
+        ctx.strokeStyle = '#91bdf1'; ctx.lineWidth = 4; ctx.strokeRect(x, y, 76, 76);
+        ctx.fillStyle = '#d8d3c8'; ctx.fillRect(x + 18, y + 17, 40, 39);
+        ctx.fillStyle = '#0e1730'; ctx.fillRect(x + 28, y + 27, 18, 14);
+        ctx.fillStyle = '#75e6ff'; ctx.fillRect(x + 42, y + 31, 6, 7);
+      }
+
+      function drawHealthBar(x, y, w, hp, max) {
+        ctx.fillStyle = '#11131e'; ctx.fillRect(x, y, w, 10);
+        ctx.fillStyle = '#ff3b38'; ctx.fillRect(x + 3, y + 3, (w - 6) * (hp / max), 4);
+        ctx.strokeStyle = '#d9e4f2'; ctx.strokeRect(x, y, w, 10);
+      }
+
+      function rectsOverlap(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+      }
+
+      function circleRect(cx, cy, r, rect) {
+        const nx = clamp(cx, rect.x, rect.x + rect.w);
+        const ny = clamp(cy, rect.y, rect.y + rect.h);
+        const dx = cx - nx;
+        const dy = cy - ny;
+        return dx * dx + dy * dy <= r * r;
+      }
+
+      function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+      function pixel(x, y, w, h) { ctx.fillRect(Math.floor(x), Math.floor(y), Math.ceil(w), Math.ceil(h)); }
+      function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+
+      window.addEventListener('keydown', event => {
+        if (['ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) event.preventDefault();
+        keys.add(event.code);
+        if (event.code === 'Space' && gameState === 'playing' && player.grounded) {
+          player.vy = player.jump;
+          player.grounded = false;
+        }
+      });
+
+      window.addEventListener('keyup', event => keys.delete(event.code));
+      startButton.addEventListener('click', startGame);
+      restartButton.addEventListener('click', startGame);
+      draw();
+    })();
+  </script>
+</body>
+</html>
